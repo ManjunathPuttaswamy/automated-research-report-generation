@@ -17,7 +17,9 @@ packages = [
     "langchain_core",
     "tavily-python",           # if error, try "tavily_python"
     "wikipedia",
-    "pydantic"
+    "pydantic",
+    "python-docx",
+    "reportlab"
 ]
 for pkg in packages:
     try:
