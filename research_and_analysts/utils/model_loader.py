@@ -7,9 +7,15 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 from logger import GLOBAL_LOGGER as log
-from exceptions.custom_exception import ProductAssistantException
+from exceptions.custom_exception import ResearchAnalystException
 import asyncio
 
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
+
+# Try CWD first (uvicorn/console), then project root (one level above utils)
+_DOTENV = find_dotenv(filename=".env", usecwd=True) or str(Path(__file__).resolve().parents[2] / ".env")
+load_dotenv(_DOTENV, override=False)
 
 class ApiKeyManager:
     def __init__(self):
@@ -64,7 +70,7 @@ class ModelLoader:
             )
         except Exception as e:
             log.error("Error loading embedding model", error=str(e))
-            raise ProductAssistantException("Failed to load embedding model", sys)
+            raise ResearchAnalystException("Failed to load embedding model", sys)
 
 
     def load_llm(self):
