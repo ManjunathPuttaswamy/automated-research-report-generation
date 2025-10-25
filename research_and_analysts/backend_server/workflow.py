@@ -24,10 +24,12 @@ from research_and_analysts.backend_server.models import (
     GenerateAnalystsState,
     InterviewState,
     ResearchGraphState,
+    SearchQuery
     
 )
 
 from research_and_analysts.utils.model_loader import ModelLoader
+from research_and_analysts.prompt_lib.prompts import *
 
 
 def build_interview_graph(llm,tavily_search=None):
@@ -37,19 +39,97 @@ def build_interview_graph(llm,tavily_search=None):
     memory = MemorySaver()
     
     def generation_question(state:InterviewState):
-        pass
-    
+        """_summary_
+
+        Args:
+            state (InterviewState): _description_
+        """
+        analyst = state["analyst"]
+        messages = state["messages"]
+        
+        #generate the question
+        system_message = ANALYST_ASK_QUESTIONS.format(goals = analyst.persona)
+        question = llm.invoke([SystemMessage(content=system_message)]+messages)
+        
+        #returen the question through state
+        return {"messages":[question]}
+        
     def search_web(state: InterviewState):
-        pass
+        """_summary_
+
+        Args:
+            state (InterviewState): _description_
+        """
+        structure_llm = llm.with_structured_output(SearchQuery)
+        search_query = structure_llm.invoke([GENERATE_SEARCH_QUERY]+state["messages"])
+        
+        # Search
+        search_docs = tavily_search.invoke(search_query.search_query,)
+        print("********************")
+        print(search_docs)
+        # Format
+        formatted_search_docs = "\n\n---\n\n".join(
+            [
+                f'<Document href="{doc["url"]}"/>\n{doc["content"]}\n</Document>'
+                for doc in search_docs
+            ]
+        )
+
+        return {"context": [formatted_search_docs]}
     
     def generate_answer(state: InterviewState):
-        pass
+        """_summary_
+
+        Args:
+            state (InterviewState): _description_
+        """
+            # Get state
+        analyst = state["analyst"]
+        messages = state["messages"]
+        context = state["context"]
+
+        # Answer question
+        system_message = GENERATE_ANSWERS.format(goals=analyst.persona, context=context)
+        answer = llm.invoke([SystemMessage(content=system_message)]+messages)
+                
+        # Name the message as coming from the expert
+        answer.name = "expert"
+        
+        # Append it to state
+        return {"messages": [answer]}
+    
     
     def save_interview(state: InterviewState):
-        pass
+        """_summary_
+
+        Args:
+            state (InterviewState): _description_
+        """
+            # Get messages
+        messages = state["messages"]
+        
+        # Convert interview to a string
+        interview = get_buffer_string(messages)
+        
+        # Save to interviews key
+        return {"interview": interview}
     
     def write_section(state: InterviewState):
-        pass
+        """_summary_
+
+        Args:
+            state (InterviewState): _description_
+        """
+         # Get state
+        context = state["context"]
+        analyst = state["analyst"]
+    
+        # Write section using either the gathered source docs from interview (context) or the interview itself (interview)
+        system_message = WRITE_SECTION.format(focus=analyst.description)
+        section = llm.invoke([SystemMessage(content=system_message)]+[HumanMessage(content=f"Use this source to write your section: {context}")]) 
+                    
+        # Append it to state
+        return {"sections": [section.content]}
 
     builder = StateGraph(InterviewState)
     builder.add_node("ask_question", generation_question)
@@ -69,61 +149,197 @@ def build_interview_graph(llm,tavily_search=None):
 
 
 class AutonomousReportGenerator:
-    def __init__(self):
+    def __init__(self,llm):
         """_summary_
         """
-        pass
+        self.llm = llm
+        self.memory = MemorySaver()
+        self.tavily_search = TavilySearchResults(tavily_api_key="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")
     
-    def create_analyst(self):
+    def create_analyst(self,state:GenerateAnalystsState):
         """_summary_
         """
-        pass
+        topic = state["topic"]
+        max_analysts = state["max_analysts"]
+        human_analyst_feedback = state.get("human_analyst_feedback","")
+        
+        structured_llm = llm.with_structured_output(Perspectives)
+        
+        system_messages = CREATE_ANALYSTS_PROMPT.format(
+            topic=topic,
+            max_analysts=max_analysts,
+            human_analyst_feedback=human_analyst_feedback
+            
+            )
+        analysts = structured_llm.invoke([SystemMessage(content=system_messages)]+ [HumanMessage(content="Generate the set of analysts.")])
+        
+        # Write the list of analysis to state
+        return {"analysts": analysts.analysts}
     
     def human_feedback(self):
         """_summary_
         """
         pass
     
-    def write_report(self):
+    def write_report(self,state: ResearchGraphState):
         """_summary_
         """
-        pass
+        sections = state.get("sections", [])
+        topic = state.get("topic", "")
+        system_message = f"You are compiling a unified research report on: {topic}."
+        if not sections:
+            sections = ["No sections generated — please verify interview stage."]
     
-    def write_introduction(self):
+        report = self.llm.invoke([
+            SystemMessage(content=system_message),
+            HumanMessage(content="\n\n".join(sections))
+        ])
+        return {"content": report.content}
+            
+    def write_introduction(self,state:ResearchGraphState):
+            # Full set of sections
+        sections = state["sections"]
+        topic = state["topic"]
+
+        # Concat all sections together
+        formatted_str_sections = "\n\n".join([f"{section}" for section in sections])
+        
+        # Summarize the sections into a final report
+        
+        instructions = INTRO_CONCLUSION_INSTRUCTIONS.format(topic=topic, formatted_str_sections=formatted_str_sections)    
+        intro = llm.invoke([instructions]+[HumanMessage(content=f"Write the report introduction")]) 
+        return {"introduction": intro.content}
+
+    
+    def write_conclusion(self,state:ResearchGraphState):
         """_summary_
         """
-        pass
+        sections = state["sections"]
+        topic = state["topic"]
+
+        # Concat all sections together
+        formatted_str_sections = "\n\n".join([f"{section}" for section in sections])
+        
+        # Summarize the sections into a final report
+        
+        instructions = INTRO_CONCLUSION_INSTRUCTIONS.format(topic=topic, formatted_str_sections=formatted_str_sections)    
+        conclusion = llm.invoke([instructions]+[HumanMessage(content=f"Write the report conclusion")]) 
+        return {"conclusion": conclusion.content}
     
-    def write_conclusion(self):
+    def finalize_report(self,state:ResearchGraphState):
         """_summary_
         """
-        pass
-    
-    def finalize_report(self):
+        content = state["content"]
+        if content.startswith("## Insights"):
+            content = content.strip("## Insights")
+        if "## Sources" in content:
+            try:
+                content, sources = content.split("\n## Sources\n")
+            except Exception as e:
+                sources = None
+        else:
+            sources = None
+
+        final_report = state["introduction"] + "\n\n---\n\n" + content + "\n\n---\n\n" + state["conclusion"]
+        if sources is not None:
+            final_report += "\n\n## Sources\n" + sources
+        return {"final_report": final_report}
+        
+    def save_report(self,final_report: str, topic: str, format: str = "docx", save_dir: str = None):
         """_summary_
         """
-        pass
+        
+        import re
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Sanitize topic for Windows file system
+        safe_topic = re.sub(r'[\\/*?:"<>|]', "_", topic)
+        filename = f"{safe_topic.replace(' ', '_')}_{timestamp}.{format}"
+        
+        if save_dir is None:
+            save_dir =  os.path.join(os.getcwd(),"generated_report")
+        os.makedirs(save_dir,exist_ok=True)
+        file_path = os.path.join(save_dir,filename)
+        
+        if format == "docx":
+            self._save_as_docx(final_report, file_path)
+            
+        elif format == "pdf":
+            self._save_as_pdf(final_report,file_path)
+            
+        else:
+            raise ValueError("Invalid format. Use 'docx' or 'pdf'.")
+        
+        print(f"Report Saved: {file_path}")
+        return file_path
+            
     
-    def save_report(self):
-        """_summary_
-        """
-        pass
-    
-    def _save_as_docx(self):
-        """'_summary_'
-        """
-        pass
-    
-    def _save_as_pdf(self):
-        """_summary_
-        """
-        pass
+    def _save_as_docx(self, text: str, file_path: str):
+        doc = Document()
+        for line in text.split("\n"):
+            if line.startswith("# "):
+                doc.add_heading(line[2:], level=1)
+            elif line.startswith("## "):
+                doc.add_heading(line[3:], level=2)
+            elif line.startswith("### "):
+                doc.add_heading(line[4:], level=3)
+            else:
+                doc.add_paragraph(line)
+        doc.save(file_path)
+
+    def _save_as_pdf(self, text: str, file_path: str):
+        c = canvas.Canvas(file_path, pagesize=letter)
+        width, height = letter
+        x, y = 50, height - 50
+        for line in text.split("\n"):
+            if not line.strip():
+                y -= 15
+                continue
+            if y < 50:
+                c.showPage()
+                y = height - 50
+            if line.startswith("# "):
+                c.setFont("Helvetica-Bold", 14)
+                line = line[2:]
+            elif line.startswith("## "):
+                c.setFont("Helvetica-Bold", 12)
+                line = line[3:]
+            else:
+                c.setFont("Helvetica", 10)
+            c.drawString(x, y, line.strip())
+            y -= 15
+        c.save()
     
     def build_graph(self):
         """_summary_
         """
         
         builder = StateGraph(ResearchGraphState)
+        
+        interview_graph = build_interview_graph(self.llm, self.tavily_search)
+        
+        def initiate_all_interviews(state: ResearchGraphState):
+            topic = state["topic"]
+            analysts = state.get("analysts", [])
+            if not analysts:
+                print("No analysts found — skipping interviews.")
+                return END
+            # Create one Send() event per analyst
+            return [
+                Send(
+                    "conduct_interview",
+                    {
+                        "analyst": analyst,
+                        "messages": [HumanMessage(content=f"So, let's discuss about {topic}.")],
+                        "max_num_turns": 2,
+                        "context": [],
+                        "interview": "",
+                        "sections": [],
+                    },
+                )
+                for analyst in analysts
+            ]
+        
         # Add nodes
         builder.add_node("create_analyst", self.create_analyst)
         builder.add_node("human_feedback", self.human_feedback)
@@ -154,11 +370,35 @@ if __name__ == "__main__":
         """_summary_
         """
         llm = ModelLoader().load_llm()
-        print(llm.invoke("hello").content)
-        reporter = AutonomousReportGenerator()
-        reporter.build_graph()
         
+        reporter = AutonomousReportGenerator(llm)
         
+        graph = reporter.build_graph()
         
+        topic = "How can generative help us to play the cricket?"
         
-                
+        thread = {"configurable": {"thread_id": "1"}}
+        
+        for _ in graph.stream({"topic": topic, "max_analysts": 3}, thread, stream_mode="values"):
+            """_summary_
+            """
+            pass
+        
+        state = graph.get_state(thread)
+        
+        feedback = input("\n Enter your feedback or press Enter to continue as is: ").strip()
+
+        graph.update_state(thread, {"human_analyst_feedback": feedback}, as_node="human_feedback")
+        
+        for _ in graph.stream(None, thread, stream_mode="values"):pass
+
+        
+        final_state = graph.get_state(thread)
+        final_report = final_state.values.get("final_report")
+        
+        if final_report:
+            reporter.save_report(final_report, topic, "docx")
+            reporter.save_report(final_report, topic, "pdf")
+            
+        else:
+            print("No Report Content Generated")
