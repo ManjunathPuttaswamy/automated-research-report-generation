@@ -29,7 +29,7 @@ from research_and_analysts.backend_server.models import (
 )
 
 from research_and_analysts.utils.model_loader import ModelLoader
-from research_and_analysts.prompt_lib.prompts import *
+from prompt_lib.prompt_locator import *
 
 
 def build_interview_graph(llm,tavily_search=None):
