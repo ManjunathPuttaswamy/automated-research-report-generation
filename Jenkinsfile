@@ -319,7 +319,7 @@ pipeline {
         }
         always {
             echo 'Cleaning up workspace...'
-            cleanWs()
+            cleanWs(deleteDirs: true, disableDeferredWipeout: true)
         }
     }
 }
