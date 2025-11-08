@@ -1,5 +1,11 @@
 pipeline {
     agent any
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
     
     environment {
         // Azure credentials from Jenkins
@@ -33,15 +39,18 @@ pipeline {
     
     stages {
         stage('Checkout') {
-    steps {
-        echo 'Checking out code from Git...'
-        // Clean workspace first
-        deleteDir()
-        // Clone the repository
-        git branch: 'main',
-            url: 'https://github.com/ManjunathPuttaswamy/automated-research-report-generation.git'
-    }
-}
+            steps {
+                script {
+                    echo 'Checking out code from Git...'
+                    cleanWs()
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']],
+                        userRemoteConfigs: [[url: 'https://github.com/ManjunathPuttaswamy/automated-research-report-generation.git']]
+                    ])
+                }
+            }
+        }
         
         stage('Setup Python Environment') {
             steps {
