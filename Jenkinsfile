@@ -23,11 +23,11 @@ pipeline {
         STORAGE_ACCOUNT_KEY = credentials('storage-account-key')
 
         // API Keys
-        OPENAI_API_KEY = credentials('openai-api-key')
-        GOOGLE_API_KEY = credentials('google-api-key')
-        GROQ_API_KEY = credentials('groq-api-key')
-        TAVILY_API_KEY = credentials('tavily-api-key')
-        LLM_PROVIDER = credentials('llm-provider')
+        OPENAI_API_KEY = credentials('OPENAI_API_KEY')
+        GOOGLE_API_KEY = credentials('GOOGLE_API_KEY')
+        GROQ_API_KEY = credentials('GROQ_API_KEY')
+        TAVILY_API_KEY = credentials('TAVILY_API_KEY')
+        LLM_PROVIDER = credentials('LLM_PROVIDER')
 
         // App config
         APP_RESOURCE_GROUP = 'research-report-app-rg'
@@ -215,8 +215,9 @@ pipeline {
         }
         always {
             script {
+                echo "Build result (pre-cleanup): ${currentBuild.currentResult}"
                 echo 'Cleaning workspace...'
-                
+                // fix: wrap cleanup in node context
                 node {
                     cleanWs()
                 }
